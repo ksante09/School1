@@ -1,40 +1,817 @@
-```python
 import streamlit as st
 import requests
-import calendar
+from bs4 import BeautifulSoup
 from datetime import date, datetime, timedelta
+import calendar
+import re
 
-# ==================================================
-# 기본 설정
-# ==================================================
+# =========================================================
+# 설정
+# =========================================================
 
 st.set_page_config(
-    page_title="보라고등학교 휴일",
+    page_title="보라고등학교 학사일정",
     page_icon="🏫",
     layout="wide"
 )
 
-# 경기도교육청
-OFFICE_CODE = "J10"
+SCHOOL_NAME = "보라고등학교"
 
-# 보라고등학교
-SCHOOL_CODE = "7530882"
-
-# NEIS 학사일정 API
-API_URL = "https://open.neis.go.kr/hub/SchoolSchedule"
+# 공개 학사일정 페이지
+BASE_URL = (
+    "https://eznel.com/school_schedule.php"
+    "?ATPT_OFCDC_SC_CODE=J10"
+    "&SD_SCHUL_CODE=7530882"
+)
 
 WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 
 
-# ==================================================
+# =========================================================
 # CSS
-# ==================================================
+# =========================================================
 
 st.markdown("""
 <style>
 
 .stApp {
-    background: #f7f8fa;
+    background-color: #f6f7f9;
+}
+
+.block-container {
+    max-width: 1100px;
+    padding-top: 25px;
+    padding-bottom: 50px;
+}
+
+/* 헤더 */
+
+.header {
+    background: white;
+    padding: 25px;
+    border-radius: 20px;
+    border: 1px solid #eeeeee;
+    margin-bottom: 18px;
+}
+
+.title {
+    font-size: 30px;
+    font-weight: 800;
+}
+
+.subtitle {
+    color: #888888;
+    font-size: 14px;
+    margin-top: 5px;
+}
+
+
+/* D-Day */
+
+.dday {
+    background-color: #202124;
+    color: white;
+    padding: 24px;
+    border-radius: 20px;
+    margin-bottom: 20px;
+}
+
+.dday-small {
+    color: #aaaaaa;
+    font-size: 12px;
+}
+
+.dday-title {
+    font-size: 24px;
+    font-weight: 800;
+    margin-top: 5px;
+}
+
+.dday-date {
+    color: #bbbbbb;
+    margin-top: 5px;
+}
+
+
+/* 달력 */
+
+.calendar-title {
+    font-size: 22px;
+    font-weight: 800;
+    margin: 25px 0 12px 2px;
+}
+
+.weekday {
+    text-align: center;
+    font-weight: 700;
+    color: #777777;
+    padding: 8px;
+}
+
+.saturday {
+    color: #377be6;
+}
+
+.sunday {
+    color: #e05252;
+}
+
+.day {
+    background-color: white;
+    border: 1px solid #eeeeee;
+    border-radius: 12px;
+    min-height: 110px;
+    padding: 8px;
+    margin-bottom: 8px;
+}
+
+.empty {
+    min-height: 110px;
+}
+
+.today {
+    border: 2px solid #222222;
+}
+
+.date {
+    font-weight: 700;
+    font-size: 14px;
+}
+
+.date-sat {
+    color: #377be6;
+}
+
+.date-sun {
+    color: #e05252;
+}
+
+
+/* 일정 태그 */
+
+.event {
+    font-size: 10px;
+    padding: 4px;
+    border-radius: 5px;
+    margin-top: 5px;
+    line-height: 1.2;
+}
+
+.normal {
+    background-color: #eeeeee;
+}
+
+.holiday {
+    background-color: #ffe2e2;
+    color: #c43c3c;
+}
+
+.vacation {
+    background-color: #dff3e4;
+    color: #327b42;
+}
+
+.closed {
+    background-color: #fff0d5;
+    color: #95631c;
+}
+
+
+/* 일정 목록 */
+
+.schedule {
+    background-color: white;
+    border: 1px solid #eeeeee;
+    border-radius: 14px;
+    padding: 15px;
+    margin-bottom: 8px;
+}
+
+.schedule-date {
+    color: #888888;
+    font-size: 12px;
+}
+
+.schedule-name {
+    font-size: 15px;
+    font-weight: 700;
+    margin-top: 4px;
+}
+
+.schedule-content {
+    color: #777777;
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+
+/* 모바일 */
+
+@media (max-width: 700px) {
+
+    .block-container {
+        padding: 12px 7px;
+    }
+
+    .title {
+        font-size: 24px;
+    }
+
+    .header {
+        padding: 20px;
+        border-radius: 17px;
+    }
+
+    .day {
+        min-height: 82px;
+        padding: 5px;
+    }
+
+    .empty {
+        min-height: 82px;
+    }
+
+    .event {
+        font-size: 8px;
+        padding: 3px;
+    }
+
+    .date {
+        font-size: 12px;
+    }
+
+    .dday-title {
+        font-size: 20px;
+    }
+
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+# =========================================================
+# 공개 학사일정 가져오기
+# =========================================================
+
+@st.cache_data(ttl=3600)
+def get_school_schedule(year, month):
+
+    url = (
+        BASE_URL
+        + f"&year={year}"
+        + f"&month={month}"
+    )
+
+    try:
+
+        response = requests.get(
+            url,
+            timeout=10,
+            headers={
+                "User-Agent":
+                "Mozilla/5.0"
+            }
+        )
+
+        response.raise_for_status()
+
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
+
+        text = soup.get_text(
+            "\n",
+            strip=True
+        )
+
+        return text, None
+
+    except Exception as e:
+
+        return None, str(e)
+
+
+# =========================================================
+# 학사일정 파싱
+# =========================================================
+
+def parse_schedule(text, year, month):
+
+    events = {}
+
+    if not text:
+        return events
+
+    # 예:
+    # 23 재량휴업
+    # 24 추석연휴
+    # 25 추석
+
+    pattern = re.compile(
+        r'(?<!\d)(\d{1,2})일?\s+'
+        r'([^\n]+)'
+    )
+
+    matches = pattern.findall(text)
+
+    for day_text, name in matches:
+
+        try:
+            day = int(day_text)
+
+            if not 1 <= day <= 31:
+                continue
+
+            d = date(
+                year,
+                month,
+                day
+            )
+
+            name = name.strip()
+
+            # 필요없는 문구 제거
+            if len(name) > 40:
+                name = name[:40]
+
+            if name:
+                events.setdefault(
+                    d,
+                    []
+                ).append(name)
+
+        except:
+            continue
+
+    return events
+
+
+# =========================================================
+# 일정 종류
+# =========================================================
+
+def event_type(name):
+
+    text = name.replace(
+        " ",
+        ""
+    )
+
+    if any(
+        word in text
+        for word in [
+            "방학",
+            "여름방학",
+            "겨울방학",
+            "봄방학"
+        ]
+    ):
+        return "vacation"
+
+    if any(
+        word in text
+        for word in [
+            "재량휴업",
+            "휴업일"
+        ]
+    ):
+        return "closed"
+
+    if any(
+        word in text
+        for word in [
+            "추석",
+            "설날",
+            "어린이날",
+            "현충일",
+            "광복절",
+            "개천절",
+            "한글날",
+            "성탄절",
+            "삼일절",
+            "부처님오신날",
+            "공휴일",
+            "대체공휴일"
+        ]
+    ):
+        return "holiday"
+
+    return "normal"
+
+
+# =========================================================
+# 헤더
+# =========================================================
+
+st.markdown("""
+<div class="header">
+
+<div class="title">
+🏫 보라고등학교
+</div>
+
+<div class="subtitle">
+휴일 · 방학 · 재량휴업일 · 학사일정
+</div>
+
+</div>
+""", unsafe_allow_html=True)
+
+
+# =========================================================
+# 오늘
+# =========================================================
+
+today = date.today()
+
+
+# =========================================================
+# 연도 / 월
+# =========================================================
+
+col1, col2 = st.columns(2)
+
+with col1:
+
+    year = st.selectbox(
+        "연도",
+        range(
+            today.year - 1,
+            today.year + 3
+        ),
+        index=1
+    )
+
+with col2:
+
+    month = st.selectbox(
+        "월",
+        range(1, 13),
+        index=today.month - 1,
+        format_func=lambda x:
+            f"{x}월"
+    )
+
+
+# =========================================================
+# 데이터 가져오기
+# =========================================================
+
+text, error = get_school_schedule(
+    year,
+    month
+)
+
+if error:
+
+    st.error(
+        "학사일정을 가져오지 못했습니다."
+    )
+
+    st.stop()
+
+
+events = parse_schedule(
+    text,
+    year,
+    month
+)
+
+
+# =========================================================
+# 다음 휴일 찾기
+# =========================================================
+
+holiday_dates = []
+
+for d, names in events.items():
+
+    for name in names:
+
+        if event_type(name) in [
+            "holiday",
+            "vacation",
+            "closed"
+        ]:
+
+            holiday_dates.append(
+                (d, name)
+            )
+
+# 주말도 추가
+start = date(year, 1, 1)
+end = date(year, 12, 31)
+
+current = start
+
+while current <= end:
+
+    if current.weekday() >= 5:
+
+        holiday_dates.append(
+            (current, "주말")
+        )
+
+    current += timedelta(days=1)
+
+
+holiday_dates = sorted(
+    set(holiday_dates),
+    key=lambda x: x[0]
+)
+
+
+future = [
+    item
+    for item in holiday_dates
+    if item[0] >= today
+]
+
+
+# =========================================================
+# D-Day
+# =========================================================
+
+if future:
+
+    next_date, next_name = future[0]
+
+    diff = (
+        next_date - today
+    ).days
+
+    if diff == 0:
+        dday = "오늘은 휴일입니다!"
+    else:
+        dday = f"D-{diff}"
+
+    st.markdown(
+        f"""
+        <div class="dday">
+
+            <div class="dday-small">
+            NEXT HOLIDAY
+            </div>
+
+            <div class="dday-title">
+            {dday} · {next_name}
+            </div>
+
+            <div class="dday-date">
+            {next_date.strftime("%Y년 %m월 %d일")}
+            ({WEEKDAYS[next_date.weekday()]})
+            </div>
+
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+# =========================================================
+# 달력 제목
+# =========================================================
+
+st.markdown(
+    f"""
+    <div class="calendar-title">
+    📅 {year}년 {month}월
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# =========================================================
+# 요일
+# =========================================================
+
+cols = st.columns(7)
+
+for i, weekday in enumerate(WEEKDAYS):
+
+    with cols[i]:
+
+        if i == 5:
+            css = "weekday saturday"
+
+        elif i == 6:
+            css = "weekday sunday"
+
+        else:
+            css = "weekday"
+
+        st.markdown(
+            f'<div class="{css}">{weekday}</div>',
+            unsafe_allow_html=True
+        )
+
+
+# =========================================================
+# 달력
+# =========================================================
+
+weeks = calendar.Calendar(
+    firstweekday=0
+).monthdayscalendar(
+    year,
+    month
+)
+
+
+for week in weeks:
+
+    cols = st.columns(7)
+
+    for i, day in enumerate(week):
+
+        with cols[i]:
+
+            if day == 0:
+
+                st.markdown(
+                    '<div class="empty"></div>',
+                    unsafe_allow_html=True
+                )
+
+                continue
+
+            d = date(
+                year,
+                month,
+                day
+            )
+
+            css = "day"
+
+            if d == today:
+                css += " today"
+
+            st.markdown(
+                f'<div class="{css}">',
+                unsafe_allow_html=True
+            )
+
+            if i == 5:
+                date_css = "date date-sat"
+
+            elif i == 6:
+                date_css = "date date-sun"
+
+            else:
+                date_css = "date"
+
+            st.markdown(
+                f'<div class="{date_css}">{day}</div>',
+                unsafe_allow_html=True
+            )
+
+            # 학사일정
+            for name in events.get(d, []):
+
+                kind = event_type(name)
+
+                if kind == "holiday":
+
+                    event_css = "event holiday"
+                    icon = "🎉"
+
+                elif kind == "vacation":
+
+                    event_css = "event vacation"
+                    icon = "🏖️"
+
+                elif kind == "closed":
+
+                    event_css = "event closed"
+                    icon = "🏫"
+
+                else:
+
+                    event_css = "event normal"
+                    icon = "📌"
+
+                display_name = name
+
+                if len(display_name) > 12:
+                    display_name = (
+                        display_name[:12]
+                        + "..."
+                    )
+
+                st.markdown(
+                    f"""
+                    <div class="{event_css}">
+                    {icon} {display_name}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+            # 주말
+            if (
+                d.weekday() >= 5
+                and d not in events
+            ):
+
+                st.markdown(
+                    """
+                    <div class="event holiday">
+                    휴일
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+            st.markdown(
+                "</div>",
+                unsafe_allow_html=True
+            )
+
+
+# =========================================================
+# 이번 달 일정
+# =========================================================
+
+st.markdown(
+    """
+    <div class="calendar-title">
+    📋 이번 달 일정
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+month_events = []
+
+for d, names in events.items():
+
+    for name in names:
+
+        month_events.append(
+            (d, name)
+        )
+
+month_events.sort(
+    key=lambda x: x[0]
+)
+
+
+if month_events:
+
+    for d, name in month_events:
+
+        kind = event_type(name)
+
+        if kind == "holiday":
+            icon = "🎉"
+
+        elif kind == "vacation":
+            icon = "🏖️"
+
+        elif kind == "closed":
+            icon = "🏫"
+
+        else:
+            icon = "📌"
+
+        st.markdown(
+            f"""
+            <div class="schedule">
+
+                <div class="schedule-date">
+                {d.strftime("%m월 %d일")}
+                ({WEEKDAYS[d.weekday()]})
+                </div>
+
+                <div class="schedule-name">
+                {icon} {name}
+                </div>
+
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+else:
+
+    st.info(
+        "이번 달 등록된 학사일정이 없습니다."
+    )
+
+
+# =========================================================
+# 푸터
+# =========================================================
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+st.caption(
+    "보라고등학교 학사일정 · 공개 데이터 기반"
+)    background: #f7f8fa;
 }
 
 .block-container {
