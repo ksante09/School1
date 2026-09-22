@@ -1,6 +1,5 @@
-```txt
 streamlit
 requests
-```
+beautifulsoup4
 
 
